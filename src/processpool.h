@@ -5,6 +5,8 @@
 extern "C" {
 #endif
 
+#define PP_TIMEOUT 1
+#define PP_ERROR  -1
 typedef struct pp_pool_t pp_pool_t;
 
 pp_pool_t *pp_pool_new(int np);
