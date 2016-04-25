@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <sys/types.h>          /* See NOTES */
 #include <sys/wait.h>
 #include <sys/socket.h>
@@ -168,17 +169,65 @@ static int writen_timedwait(int fd, void *buf, size_t len, int msec) {
 struct pp_pool_t {
     int fd[2];
     int max_process;
+    int min_process;
     int run_process;
+    int flags;
     int ms;
 };
 
+static int pp_pool_need_nprocess_gen(pp_pool_t *pool, int *nprocess) {
+    if (pool->max_process < pool->min_process) {
+        return -1;
+    }
+
+    if (pool->min_process < 0) {
+        return -1;
+    }
+
+    if ((pool->flags & PP_MIN_CREATE) &&
+            (pool->flags & PP_MAX_CREATE)) {
+        return -1;
+    }
+
+    /* pool->flags & PP_MAX_CREATE */
+    *nprocess = pool->max_process;
+    if (pool->flags & PP_MIN_CREATE) {
+        *nprocess = pool->min_process;
+    }
+
+    if (*nprocess < 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static void pp_pool_args_set(pp_pool_t *pool, va_list ap) {
+    int i, val;
+
+    for (i = 0; (val = va_arg(ap, int)) != PP_NULL; i++) {
+        if (i == 0) {
+            pool->min_process = val;
+        } else if (i == 1) {
+            pool->flags = val;
+        } else if (i == 2) {
+            pool->ms = val;
+        }
+    }
+}
+
 /*
- * @param np    the number of process
+ * @param np            the number of process
+ * @param min_processa  (opt)
+ * @param flags         (opt)
+ * @param ms            (opt)
  *
  * @return a value fail NULL
  */
 #define PP_DEFAULT 500
-pp_pool_t *pp_pool_new(int np) {
+pp_pool_t *pp_pool_new(int np, ...) {
+    va_list    ap;
+    int        nprocess;
     pp_pool_t *pool = NULL;
 
     if (np <= 0) {
@@ -201,14 +250,25 @@ pp_pool_t *pp_pool_new(int np) {
         goto fail1;
     }
 
-    if (pp_pool_process_addn(pool, np) == -1) {
+    va_start(ap, np);
+    pp_pool_args_set(pool, ap);
+    va_end(ap);
+
+    if (pp_pool_need_nprocess_gen(pool, &nprocess) == -1) {
         goto fail1;
+    }
+
+    if (pp_pool_process_addn(pool, nprocess) == -1) {
+        goto fail2;
     }
 
     return pool;
 
-fail1:
+fail2:
     exit(1);
+fail1:
+    close(pool->fd[CHILD]);
+    close(pool->fd[PARENT]);
 fail:
     free(pool);
     return NULL;
@@ -235,8 +295,12 @@ static int pp_pool_process_loop(pp_pool_t *pool) {
     for (;;) {
         rv = readn_timedwait(pool->fd[CHILD], &arg, sizeof(process_arg_t), pool->ms * 2);
         if (rv <= 0) {
-            printf("error reading data from the parent process:%s\n",
-                    strerror(errno));
+            if (errno == ETIMEDOUT) {
+                printf("%u bye bye\n", getpid());
+            } else {
+                printf("reading data from the parent process:%s\n",
+                        strerror(errno));
+            }
             pp_pool_free(pool);
             exit(0);
         }
@@ -266,6 +330,7 @@ static int pp_pool_process_add_core(pp_pool_t *pool) {
         case -1:/* error */
             return -1;
         default:/* parent */
+            pool->run_process++;
             break;
     }
 
@@ -280,16 +345,27 @@ static int pp_pool_process_add_core(pp_pool_t *pool) {
  */
 int pp_pool_add(pp_pool_t *pool, void (*func)(void *), void *arg) {
     process_arg_t a;
+    int           ntry, rv;
 
     a.type = 0;
     a.func = func;
     a.arg  = arg;
 
-    if(writen_timedwait(pool->fd[PARENT], &a, sizeof(a), pool->ms) == -1) {
-        if (errno == ETIMEDOUT) {
+    for (ntry = 2; ntry > 0; ntry--) {
+        rv = writen_timedwait(pool->fd[PARENT], &a, sizeof(a), pool->ms);
+        if (rv == -1) {
+            if (errno != ETIMEDOUT) {
+                return PP_ERROR;
+            }
+
+            if (pool->flags & PP_AUTO_ADD) {
+                if (pp_pool_process_addn(pool, 1) == PP_ERROR) {
+                    return PP_ERROR;
+                }
+                continue;
+            }
             return PP_TIMEOUT;
         }
-        return PP_ERROR;
     }
     return 0;
 }

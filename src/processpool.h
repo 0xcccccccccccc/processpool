@@ -7,9 +7,16 @@ extern "C" {
 
 #define PP_TIMEOUT 1
 #define PP_ERROR  -1
+#define PP_NULL   -2
+
+#define PP_AUTO_ADD   0x1
+#define PP_AUTO_DEL   0x2
+#define PP_MIN_CREATE (1 << 3)
+#define PP_MAX_CREATE (1 << 4)
+
 typedef struct pp_pool_t pp_pool_t;
 
-pp_pool_t *pp_pool_new(int np);
+pp_pool_t *pp_pool_new(int np, ...);
 
 int pp_pool_add(pp_pool_t *pool, void (*func)(void *), void *arg);
 

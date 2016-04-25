@@ -11,14 +11,14 @@
 #if 0
 sem_t *sem;
 #endif
-void hello(void *arg) {
+static void hello(void *arg) {
     /*sem_wait(sem);*/
-    printf("hi.hello\n");
+    printf("hi.hello:%s\n", arg == NULL ? "" : (char *)arg);
     /*sem_post(sem);*/
 }
 
-void world(void *arg) {
-    printf("hi.world\n");
+static void world(void *arg) {
+    printf("hi.world:%s\n", arg == NULL ? "" : (char *)arg);
 }
 
 int main() {
@@ -35,15 +35,15 @@ int main() {
     }
 #endif
 
-    pool = pp_pool_new(5);
+    pool = pp_pool_new(5, PP_NULL);
     printf("process pool create ok\n");
 
     for (i = 0; i < 1000; i++) {
-        if (pp_pool_add(pool, hello, NULL) != 0) {
+        if (pp_pool_add(pool, hello, "aaaa") != 0) {
             printf("add %d fail\n", i);
         }
 
-        if (pp_pool_add(pool, world, NULL) != 0) {
+        if (pp_pool_add(pool, world, "bbbb") != 0) {
             printf("add %d fail\n", i);
         }
         printf("%d\n", i);
